@@ -5,6 +5,14 @@ pub struct BinarySearchTree<T> {
     _phantom: PhantomData<T>,
 }
 
+impl<T> Drop for BinarySearchTree<T> {
+    fn drop(&mut self) {
+        unsafe {
+            dispose_node(self.root);
+        }
+    }
+}
+
 struct Node<T> {
     item: T,
     parent: *mut Node<T>,
@@ -28,6 +36,38 @@ impl<'a, T> Node<T> {
         &self.item
     }
 }
+
+unsafe fn dispose_node<T>(l: *mut Node<T>) {
+    if l.is_null() {
+        return;
+    }
+
+    let node_ref = &mut *l;
+    match (node_ref.left.is_null(), node_ref.right.is_null()) {
+        (true, true) => {
+            // node is a leaf, just drop it.
+            drop(node_ref);
+            let _ = Box::from_raw(l);
+        }
+        (true, false) => {
+            dispose_node(node_ref.right);
+            drop(node_ref);
+            let _ = Box::from_raw(l);
+        }
+        (false, true) => {
+            dispose_node(node_ref.left);
+            drop(node_ref);
+            let _ = Box::from_raw(l);
+        }
+        (false, false) => {
+            dispose_node(node_ref.left);
+            dispose_node(node_ref.right);
+            drop(node_ref);
+            let _ = Box::from_raw(l);
+        }
+    }
+}
+
 unsafe fn insert_node<'a, T>(l: *mut *mut Node<T>, item: T, parent: *mut Node<T>)
 where
     T: Ord,
