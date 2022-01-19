@@ -51,28 +51,32 @@ where
     }
 }
 
-unsafe fn search_node<'a, 'b, T, Q>(l: *mut Node<T>, item: &'b Q) -> Option<*mut Node<T>>
+unsafe fn search_node<'a, 'b, T, Q>(
+    l: *mut Node<T>,
+    item: &'b Q,
+    called_once: bool,
+) -> (bool, Option<*mut Node<T>>)
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
 {
     if l.is_null() {
-        return None;
+        return (called_once, None);
     }
 
     match item.cmp((*l).item.borrow()) {
-        std::cmp::Ordering::Equal => Some(l),
-        std::cmp::Ordering::Less => search_node((*l).left, item),
-        std::cmp::Ordering::Greater => search_node((*l).right, item),
+        std::cmp::Ordering::Equal => (called_once, Some(l)),
+        std::cmp::Ordering::Less => search_node((*l).left, item, false),
+        std::cmp::Ordering::Greater => search_node((*l).right, item, false),
     }
 }
 
-unsafe fn delete_node<'a, T>(node: *mut *mut Node<T>)
+unsafe fn delete_node<'a, T>(node: *mut *mut Node<T>) -> bool
 where
     T: Ord,
 {
     if node.is_null() {
-        return;
+        return false;
     }
 
     let node_ref = &mut **node;
@@ -82,28 +86,31 @@ where
             // Node has no children, so we just deallocate it.
             drop(node_ref);
             let _ = Box::from_raw(*node);
+            true
         }
         (true, false) => {
-            // Node has one child (right), link it to parent.
-            let parent = node_ref.parent;
-            let child = node_ref.right;
-            // Set child's parent to node's parent.
-            (*child).parent = parent;
-            // Free this node.
-            let _ = Box::from_raw(*node);
-            // Set this node pointer to point at child.
-            *node = child;
+            // Node has one child (right), copy child to node.
+            // Take ownership of right.
+            let child = Box::from_raw(node_ref.right);
+
+            node_ref.right = child.right;
+            node_ref.left = child.left;
+            node_ref.item = child.item;
+
+            false
+            // child is dropped here
         }
         (false, true) => {
-            // Node has one child (left), link it to parent.
-            let parent = node_ref.parent;
-            let child = node_ref.left;
-            // Set child's parent to node's parent.
-            (*child).parent = parent;
-            // Free this node.
-            let _ = Box::from_raw(*node);
-            // Set this node pointer to point at child.
-            *node = child;
+            // Node has one child (left), copy child to node.
+            // Take ownership of left.
+            let child = Box::from_raw(node_ref.left);
+
+            node_ref.right = child.right;
+            node_ref.left = child.left;
+            node_ref.item = child.item;
+
+            false
+            // child is dropped here
         }
         (false, false) => {
             // Node has two children.
@@ -115,11 +122,14 @@ where
                 next_biggest = (&*next_biggest).left;
             }
 
-            (*node_ref.parent).left = std::ptr::null_mut();
-
             // Turn next_biggest back into a box
             let next_biggest = Box::from_raw(next_biggest);
+            (*next_biggest.parent).left = std::ptr::null_mut();
+            node_ref.left = next_biggest.left;
+            node_ref.right = next_biggest.right;
             node_ref.item = (next_biggest).item;
+
+            false
         }
     }
 }
@@ -181,7 +191,7 @@ impl<'a, T> BinarySearchTree<T> {
         Q: Ord + ?Sized,
     {
         unsafe {
-            let node = search_node(self.root, item);
+            let (_, node) = search_node(self.root, item, true);
             node.map(|ptr| (&*ptr).item())
         }
     }
@@ -208,15 +218,21 @@ impl<'a, T> BinarySearchTree<T> {
         unsafe { find_maximum(self.root) }
     }
 
-    pub fn delete<Q>(&self, item: &Q)
+    pub fn delete<Q>(&mut self, item: &Q)
     where
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
         unsafe {
-            let node = search_node(self.root, item);
+            let (is_root, node) = search_node(self.root, item, true);
             if let Some(mut ptr) = node {
-                delete_node(&mut ptr as *mut _);
+                let was_leaf = delete_node(&mut ptr as *mut _);
+                // if the deleted node was the last node, change root to NULL.
+                // Only the last node if it was the root node, and it had no children.
+
+                if is_root && was_leaf {
+                    self.root = std::ptr::null_mut();
+                }
             }
         }
     }
