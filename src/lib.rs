@@ -23,6 +23,10 @@ impl<'a, T> Node<'a, T> {
             _phantom: PhantomData,
         }
     }
+
+    pub fn item(&'a self) -> &'a T {
+        &self.item
+    }
 }
 unsafe fn insert_node<'a, T>(l: *mut *mut Node<'a, T>, item: T, parent: *mut Node<'a, T>)
 where
@@ -47,7 +51,7 @@ where
     }
 }
 
-unsafe fn search_node<'a, 'b, T, Q>(l: *const Node<'a, T>, item: &'b Q) -> Option<&'a T>
+unsafe fn search_node<'a, 'b, T, Q>(l: *mut Node<'a, T>, item: &'b Q) -> Option<*mut Node<'a, T>>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -57,9 +61,66 @@ where
     }
 
     match item.cmp((*l).item.borrow()) {
-        std::cmp::Ordering::Equal => Some(&(*l).item),
+        std::cmp::Ordering::Equal => Some(l),
         std::cmp::Ordering::Less => search_node((*l).left, item),
         std::cmp::Ordering::Greater => search_node((*l).right, item),
+    }
+}
+
+unsafe fn delete_node<'a, T>(node: *mut *mut Node<'a, T>)
+where
+    T: Ord,
+{
+    if node.is_null() {
+        return;
+    }
+
+    let node_ref = &mut **node;
+
+    match (node_ref.left.is_null(), node_ref.right.is_null()) {
+        (true, true) => {
+            // Node has no children, so we just deallocate it.
+            drop(node_ref);
+            let _ = Box::from_raw(*node);
+        }
+        (true, false) => {
+            // Node has one child (right), link it to parent.
+            let parent = node_ref.parent;
+            let child = node_ref.right;
+            // Set child's parent to node's parent.
+            (*child).parent = parent;
+            // Free this node.
+            let _ = Box::from_raw(*node);
+            // Set this node pointer to point at child.
+            *node = child;
+        }
+        (false, true) => {
+            // Node has one child (left), link it to parent.
+            let parent = node_ref.parent;
+            let child = node_ref.left;
+            // Set child's parent to node's parent.
+            (*child).parent = parent;
+            // Free this node.
+            let _ = Box::from_raw(*node);
+            // Set this node pointer to point at child.
+            *node = child;
+        }
+        (false, false) => {
+            // Node has two children.
+            // Solution is to replace this node's value with the left-most descendant of the right child.
+            // i.e., the smallest node that is larger than this one.
+            // Then delete that node.
+            let mut next_biggest = (&mut *node_ref).right;
+            while !(&*next_biggest).left.is_null() {
+                next_biggest = (&*next_biggest).left;
+            }
+
+            (*node_ref.parent).left = std::ptr::null_mut();
+
+            // Turn next_biggest back into a box
+            let next_biggest = Box::from_raw(next_biggest);
+            node_ref.item = (next_biggest).item;
+        }
     }
 }
 
@@ -119,7 +180,10 @@ impl<'a, T> BinarySearchTree<'a, T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        unsafe { search_node(self.root, item) }
+        unsafe {
+            let node = search_node(self.root, item);
+            node.map(|ptr| (&*ptr).item())
+        }
     }
 
     pub fn contains<Q>(&'a self, item: &Q) -> bool
@@ -143,69 +207,17 @@ impl<'a, T> BinarySearchTree<'a, T> {
     {
         unsafe { find_maximum(self.root) }
     }
-}
 
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    #[test]
-    fn can_make_one() {
-        let _: BinarySearchTree<i32> = BinarySearchTree::new();
-    }
-
-    #[test]
-    fn can_insert_value() {
-        let mut tree = BinarySearchTree::new();
-        tree.insert(3);
-        tree.insert(44);
-        tree.insert(5);
-    }
-
-    #[test]
-    fn can_search_tree() {
-        let mut tree = BinarySearchTree::new();
-        tree.insert(3);
-        tree.insert(44);
-        tree.insert(5);
-
-        assert!(tree.contains(&3));
-        assert!(tree.contains(&44));
-        assert!(tree.contains(&5));
-
-        assert!(!tree.contains(&1));
-        assert!(!tree.contains(&1001));
-        assert!(!tree.contains(&4));
-    }
-
-    #[test]
-    fn can_get_refs() {
-        let mut tree = BinarySearchTree::new();
-
-        tree.insert(String::from("Hello"));
-        tree.insert(String::from("World"));
-        tree.insert(String::from("How are you?"));
-
-        let q = tree.get("How are you?").unwrap();
-
-        assert_eq!(q, "How are you?");
-    }
-
-    #[test]
-    fn can_find_min_and_max() {
-        let mut tree = BinarySearchTree::new();
-
-        assert!(tree.min().is_none());
-        assert!(tree.max().is_none());
-
-        tree.insert(3);
-        tree.insert(44);
-        tree.insert(5);
-
-        let &min = tree.min().unwrap();
-        let &max = tree.max().unwrap();
-
-        assert_eq!(min, 3);
-        assert_eq!(max, 44);
+    pub fn delete<Q>(&self, item: &Q)
+    where
+        T: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        unsafe {
+            let node = search_node(self.root, item);
+            if let Some(mut ptr) = node {
+                delete_node(&mut ptr as *mut _);
+            }
+        }
     }
 }
