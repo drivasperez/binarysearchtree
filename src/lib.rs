@@ -2,7 +2,7 @@ use std::{borrow::Borrow, marker::PhantomData};
 
 pub struct BinarySearchTree<'a, T> {
     root: *mut Node<'a, T>,
-    _phantom: PhantomData<&'a T>,
+    _phantom: PhantomData<&'a mut T>,
 }
 
 struct Node<'a, T> {
@@ -10,7 +10,7 @@ struct Node<'a, T> {
     parent: *mut Node<'a, T>,
     left: *mut Node<'a, T>,
     right: *mut Node<'a, T>,
-    _phantom: PhantomData<&'a T>,
+    _phantom: PhantomData<&'a mut T>,
 }
 
 impl<'a, T> Node<'a, T> {
@@ -29,12 +29,10 @@ where
     T: Ord,
 {
     if (*l).is_null() {
-        let new_tree = Box::new(Node::new(item));
-        let new_tree = Box::leak(new_tree);
-
+        let mut new_tree = Box::new(Node::new(item));
         new_tree.parent = parent;
+        let new_tree = Box::into_raw(new_tree);
 
-        let new_tree: *mut _ = new_tree;
         *l = new_tree;
 
         return;
@@ -63,6 +61,40 @@ where
         std::cmp::Ordering::Less => search_node((*l).left, item),
         std::cmp::Ordering::Greater => search_node((*l).right, item),
     }
+}
+
+unsafe fn find_minimum<'a, T>(t: *const Node<'a, T>) -> Option<&'a T>
+where
+    T: Ord,
+{
+    if t.is_null() {
+        return None;
+    }
+
+    let mut min = &*t;
+
+    while !min.left.is_null() {
+        min = &*min.left;
+    }
+
+    Some(&min.item)
+}
+
+unsafe fn find_maximum<'a, T>(t: *const Node<'a, T>) -> Option<&'a T>
+where
+    T: Ord,
+{
+    if t.is_null() {
+        return None;
+    }
+
+    let mut max = &*t;
+
+    while !max.right.is_null() {
+        max = &*max.right;
+    }
+
+    Some(&max.item)
 }
 
 impl<'a, T> BinarySearchTree<'a, T> {
@@ -97,11 +129,24 @@ impl<'a, T> BinarySearchTree<'a, T> {
     {
         self.get(item).is_some()
     }
+
+    pub fn min(&self) -> Option<&T>
+    where
+        T: Ord,
+    {
+        unsafe { find_minimum(self.root) }
+    }
+
+    pub fn max(&self) -> Option<&T>
+    where
+        T: Ord,
+    {
+        unsafe { find_maximum(self.root) }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
 
     use super::*;
     #[test]
@@ -130,25 +175,37 @@ mod tests {
 
         assert!(!tree.contains(&1));
         assert!(!tree.contains(&1001));
-        assert!(!tree.contains(&3));
+        assert!(!tree.contains(&4));
     }
 
     #[test]
     fn can_get_refs() {
         let mut tree = BinarySearchTree::new();
-        let mut btree = BTreeSet::new();
 
         tree.insert(String::from("Hello"));
         tree.insert(String::from("World"));
         tree.insert(String::from("How are you?"));
-        btree.insert(String::from("How are you?"));
 
         let q = tree.get("How are you?").unwrap();
-        let q2 = btree.get("How are you?").unwrap();
 
         assert_eq!(q, "How are you?");
+    }
 
-        assert_eq!(q, "How are you?");
-        assert_eq!(q2, "How are you?");
+    #[test]
+    fn can_find_min_and_max() {
+        let mut tree = BinarySearchTree::new();
+
+        assert!(tree.min().is_none());
+        assert!(tree.max().is_none());
+
+        tree.insert(3);
+        tree.insert(44);
+        tree.insert(5);
+
+        let &min = tree.min().unwrap();
+        let &max = tree.max().unwrap();
+
+        assert_eq!(min, 3);
+        assert_eq!(max, 44);
     }
 }
