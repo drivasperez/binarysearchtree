@@ -1,3 +1,5 @@
+#![feature(dropck_eyepatch)]
+
 use std::{borrow::Borrow, marker::PhantomData};
 
 pub struct BinarySearchTree<T> {
@@ -5,7 +7,7 @@ pub struct BinarySearchTree<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T> Drop for BinarySearchTree<T> {
+unsafe impl<#[may_dangle] T> Drop for BinarySearchTree<T> {
     fn drop(&mut self) {
         unsafe {
             dispose_node(self.root);

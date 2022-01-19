@@ -84,3 +84,12 @@ fn can_delete() {
     assert!(tree.min().is_none());
     assert!(tree.max().is_none());
 }
+
+#[test]
+fn drop_check() {
+    let mut x = 42;
+    let mut tree = BinarySearchTree::new();
+    tree.insert(&mut x);
+
+    println!("{}", x);
+}
