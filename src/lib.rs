@@ -1,19 +1,19 @@
 use std::{borrow::Borrow, marker::PhantomData};
 
-pub struct BinarySearchTree<'a, T> {
-    root: *mut Node<'a, T>,
-    _phantom: PhantomData<&'a mut T>,
+pub struct BinarySearchTree<T> {
+    root: *mut Node<T>,
+    _phantom: PhantomData<T>,
 }
 
-struct Node<'a, T> {
+struct Node<T> {
     item: T,
-    parent: *mut Node<'a, T>,
-    left: *mut Node<'a, T>,
-    right: *mut Node<'a, T>,
-    _phantom: PhantomData<&'a mut T>,
+    parent: *mut Node<T>,
+    left: *mut Node<T>,
+    right: *mut Node<T>,
+    _phantom: PhantomData<T>,
 }
 
-impl<'a, T> Node<'a, T> {
+impl<'a, T> Node<T> {
     pub fn new(item: T) -> Self {
         Self {
             item,
@@ -28,7 +28,7 @@ impl<'a, T> Node<'a, T> {
         &self.item
     }
 }
-unsafe fn insert_node<'a, T>(l: *mut *mut Node<'a, T>, item: T, parent: *mut Node<'a, T>)
+unsafe fn insert_node<'a, T>(l: *mut *mut Node<T>, item: T, parent: *mut Node<T>)
 where
     T: Ord,
 {
@@ -51,7 +51,7 @@ where
     }
 }
 
-unsafe fn search_node<'a, 'b, T, Q>(l: *mut Node<'a, T>, item: &'b Q) -> Option<*mut Node<'a, T>>
+unsafe fn search_node<'a, 'b, T, Q>(l: *mut Node<T>, item: &'b Q) -> Option<*mut Node<T>>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -67,7 +67,7 @@ where
     }
 }
 
-unsafe fn delete_node<'a, T>(node: *mut *mut Node<'a, T>)
+unsafe fn delete_node<'a, T>(node: *mut *mut Node<T>)
 where
     T: Ord,
 {
@@ -124,7 +124,7 @@ where
     }
 }
 
-unsafe fn find_minimum<'a, T>(t: *const Node<'a, T>) -> Option<&'a T>
+unsafe fn find_minimum<'a, T>(t: *const Node<T>) -> Option<&'a T>
 where
     T: Ord,
 {
@@ -141,7 +141,7 @@ where
     Some(&min.item)
 }
 
-unsafe fn find_maximum<'a, T>(t: *const Node<'a, T>) -> Option<&'a T>
+unsafe fn find_maximum<'a, T>(t: *const Node<T>) -> Option<&'a T>
 where
     T: Ord,
 {
@@ -158,7 +158,7 @@ where
     Some(&max.item)
 }
 
-impl<'a, T> BinarySearchTree<'a, T> {
+impl<'a, T> BinarySearchTree<T> {
     pub fn new() -> Self {
         Self {
             root: std::ptr::null_mut(),
