@@ -92,9 +92,9 @@ unsafe fn insert_node<'a, T>(
     }
 }
 
-unsafe fn search_node<'a, 'b, T, Q>(
+unsafe fn search_node<T, Q>(
     l: Option<NonNull<Node<T>>>,
-    item: &'b Q,
+    item: &'_ Q,
     called_once: bool,
 ) -> (bool, Option<NonNull<Node<T>>>)
 where
@@ -113,7 +113,7 @@ where
     }
 }
 
-unsafe fn delete_node<'a, T>(node: Option<&mut NonNull<Node<T>>>) -> bool
+unsafe fn delete_node<T>(node: Option<&mut NonNull<Node<T>>>) -> bool
 where
     T: Ord,
 {
@@ -156,8 +156,8 @@ where
                 // i.e., the smallest node that is larger than this one.
                 // Then delete that node.
                 let mut next_biggest = right;
-                while !next_biggest.as_ref().left.is_none() {
-                    next_biggest = next_biggest.as_ref().left.unwrap();
+                while let Some(left) = next_biggest.as_ref().left {
+                    next_biggest = left;
                 }
 
                 // Turn next_biggest back into a box
@@ -173,7 +173,7 @@ where
             }
         }
     } else {
-        return false;
+        false
     }
 }
 
@@ -218,6 +218,12 @@ where
         Some(&max.as_ref().item)
     } else {
         None
+    }
+}
+
+impl<T> Default for BinarySearchTree<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
