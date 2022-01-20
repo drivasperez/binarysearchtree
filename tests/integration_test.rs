@@ -93,3 +93,19 @@ fn drop_check() {
 
     println!("{}", x);
 }
+
+#[test]
+fn covariance() {
+    let x = String::from("Hello");
+    // Should be covariant over T.
+    let y = x.as_str();
+    let mut tree = BinarySearchTree::new();
+    let mut tree2: BinarySearchTree<&'static str> = BinarySearchTree::new();
+    tree2.insert("Hi!");
+    tree.insert(y);
+
+    tree = tree2;
+
+    assert!(tree.contains("Hi!"));
+    assert!(!tree.contains("Hello"));
+}
