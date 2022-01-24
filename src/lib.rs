@@ -1,4 +1,5 @@
 #![feature(dropck_eyepatch)]
+#![warn(unsafe_op_in_unsafe_fn)]
 
 use std::{borrow::Borrow, marker::PhantomData, ptr::NonNull};
 
@@ -39,34 +40,43 @@ impl<'a, T> Node<T> {
     }
 }
 
-unsafe fn dispose_node<T>(l: NonNull<Node<T>>) {
-    let node_ref = l.as_ref();
-    match (node_ref.left, node_ref.right) {
-        (None, None) => {
-            // node is a leaf, just drop it.
-            drop(node_ref);
-            let _ = Box::from_raw(l.as_ptr());
-        }
-        (None, Some(right)) => {
-            dispose_node(right);
-            drop(node_ref);
-            let _ = Box::from_raw(l.as_ptr());
-        }
-        (Some(left), None) => {
-            dispose_node(left);
-            drop(node_ref);
-            let _ = Box::from_raw(l.as_ptr());
-        }
-        (Some(left), Some(right)) => {
-            dispose_node(left);
-            dispose_node(right);
-            drop(node_ref);
-            let _ = Box::from_raw(l.as_ptr());
+/// Recursively deallocate a node and its children, bottom-up.
+/// Safety:
+/// - l must be properly aligned.
+/// - l must be allocated correctly.
+/// - l must not be aliased.
+/// - after calling this function, l must not be reused.
+unsafe fn dispose_node<T>(mut l: NonNull<Node<T>>) {
+    // Safety: as_mut safety requirements are the safety requirements of this function.
+    let node_ref = unsafe { l.as_mut() };
+    // Safety: calling this function recursively following safety requirements.
+    // i.e., if T is correctly defined, then T.left, T.right are as well.
+    unsafe {
+        match (node_ref.left, node_ref.right) {
+            (None, None) => {
+                // node is a leaf, we can just drop it.
+            }
+            (None, Some(right)) => {
+                dispose_node(right);
+            }
+            (Some(left), None) => {
+                dispose_node(left);
+            }
+            (Some(left), Some(right)) => {
+                dispose_node(left);
+                dispose_node(right);
+            }
         }
     }
+
+    // Safety: calling bottom-up, l is not aliased and this pointer will never be used again.
+    let _ = unsafe { Box::from_raw(l.as_ptr()) };
 }
 
-unsafe fn insert_node<'a, T>(
+/// Insert a node into a tree.
+/// Safety: if l or parent are `Some`, then they must
+/// point to correctly aligned and allocated memory for `Node<T>`.
+unsafe fn insert_node<T>(
     l: &mut Option<NonNull<Node<T>>>,
     item: T,
     parent: Option<NonNull<Node<T>>>,
@@ -74,19 +84,21 @@ unsafe fn insert_node<'a, T>(
     T: Ord,
 {
     if let Some(mut leaf) = *l {
-        let leaf = leaf.as_mut();
+        let leaf = unsafe { leaf.as_mut() };
         if item < leaf.item {
             let left = &mut leaf.left;
-            insert_node(left, item, *l);
+            unsafe { insert_node(left, item, *l) };
         } else {
             let right = &mut leaf.right;
-            insert_node(right, item, *l);
+            unsafe { insert_node(right, item, *l) };
         }
     } else {
+        // Base case, create new node.
         let mut new_tree = Box::new(Node::new(item));
         new_tree.parent = parent;
         let new_tree = Box::into_raw(new_tree);
-        let new_tree = NonNull::new_unchecked(new_tree);
+        // Safety: new_tree is definitely non-null as we just made it from a *mut Box<T>.
+        let new_tree = unsafe { NonNull::new_unchecked(new_tree) };
 
         *l = Some(new_tree);
     }
@@ -101,12 +113,12 @@ where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
 {
-    if let Some(mut leaf) = l {
-        let leaf_ref = leaf.as_mut();
+    if let Some(leaf) = l {
+        let leaf_ref = unsafe { leaf.as_ref() };
         match item.cmp(leaf_ref.item.borrow()) {
             std::cmp::Ordering::Equal => (called_once, Some(leaf)),
-            std::cmp::Ordering::Less => search_node(leaf_ref.left, item, false),
-            std::cmp::Ordering::Greater => search_node(leaf_ref.right, item, false),
+            std::cmp::Ordering::Less => unsafe { search_node(leaf_ref.left, item, false) },
+            std::cmp::Ordering::Greater => unsafe { search_node(leaf_ref.right, item, false) },
         }
     } else {
         (called_once, None)
@@ -118,18 +130,25 @@ where
     T: Ord,
 {
     if let Some(node) = node {
-        let node_ref = node.as_mut();
+        // Safety: We have a &mut reference to this pointer, so nobody else is using it.
+        let node_ref = unsafe { node.as_mut() };
 
         match (node_ref.left, node_ref.right) {
             (None, None) => {
                 // Node has no children, so we just deallocate it.
-                let _ = Box::from_raw(node.as_mut());
+                // Safety: - never use node_ref again.
+                //         - node_ref was created from Box<T>, so fulfills contract.
+                unsafe {
+                    let _ = Box::from_raw(node_ref);
+                }
                 true
             }
             (None, Some(mut right)) => {
                 // Node has one child (right), copy child to node.
                 // Take ownership of right.
-                let child = Box::from_raw(right.as_mut());
+                // Safety: - `right` is never dereferenced again, overwritten with child.right
+                //         - `right` was created from Box<T>, fulfills contract.
+                let child = unsafe { Box::from_raw(right.as_mut()) };
 
                 node_ref.right = child.right;
                 node_ref.left = child.left;
@@ -141,7 +160,9 @@ where
             (Some(mut left), None) => {
                 // Node has one child (left), copy child to node.
                 // Take ownership of left.
-                let child = Box::from_raw(left.as_mut());
+                // Safety: - `left` is never dereferenced again, overwritten with child.left
+                //         - `left` was created from Box<T>, fulfills contract.
+                let child = unsafe { Box::from_raw(left.as_mut()) };
 
                 node_ref.right = child.right;
                 node_ref.left = child.left;
@@ -156,14 +177,16 @@ where
                 // i.e., the smallest node that is larger than this one.
                 // Then delete that node.
                 let mut next_biggest = right;
-                while let Some(left) = next_biggest.as_ref().left {
+                while let Some(left) = unsafe { next_biggest.as_mut() }.left {
                     next_biggest = left;
                 }
 
                 // Turn next_biggest back into a box
-                let next_biggest = Box::from_raw(next_biggest.as_mut());
+                // Safety: - next_biggest pointer never used again (shadowed by box)
+                //         - Memory behind pointer valid as was created from Box<T>.
+                let next_biggest = unsafe { Box::from_raw(next_biggest.as_mut()) };
                 if let Some(mut parent) = next_biggest.parent {
-                    parent.as_mut().left = None;
+                    unsafe { parent.as_mut() }.left = None;
                 }
                 node_ref.left = next_biggest.left;
                 node_ref.right = next_biggest.right;
@@ -185,7 +208,7 @@ where
         let mut min = t;
 
         loop {
-            match min.as_ref().left {
+            match unsafe { min.as_ref() }.left {
                 None => break,
                 Some(left) => {
                     min = left;
@@ -193,7 +216,7 @@ where
             }
         }
 
-        Some(&min.as_ref().item)
+        Some(&unsafe { min.as_ref() }.item)
     } else {
         None
     }
@@ -207,7 +230,7 @@ where
         let mut max = t;
 
         loop {
-            match max.as_ref().right {
+            match unsafe { max.as_ref() }.right {
                 None => break,
                 Some(right) => {
                     max = right;
@@ -215,7 +238,7 @@ where
             }
         }
 
-        Some(&max.as_ref().item)
+        Some(&unsafe { max.as_ref() }.item)
     } else {
         None
     }
